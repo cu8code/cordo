@@ -14,13 +14,11 @@ import {
     Color,
 } from "three";
 
-// Utility to load a texture from a Base64 data URL or image URL
 export const loadTexture = (url: string) => {
     const textureLoader = new TextureLoader();
     return textureLoader.load(url);
 };
 
-// Utility to create a background scene with a fixed camera
 export const createBackgroundScene = (width: number, height: number, texture: any) => {
     const scene = new Scene();
     const camera = new OrthographicCamera(
@@ -45,10 +43,9 @@ export const createBackgroundScene = (width: number, height: number, texture: an
     return { scene, camera };
 };
 
-// Utility to create a video scene with a perspective camera
 export const createVideoScene = (width: number, height: number, videoTexture: VideoTexture) => {
     const scene = new Scene();
-    const camera = new PerspectiveCamera(75, width / height, 0.1, 1000);
+    const camera = new PerspectiveCamera(65, width / height, 0.1, 1000);
     camera.position.z = 10;
 
     const planeWidth = 16;
@@ -67,7 +64,6 @@ export const createVideoScene = (width: number, height: number, videoTexture: Vi
     return { scene, camera };
 };
 
-// Utility to handle canvas resizing
 export const handleResize = (
     canvas: HTMLCanvasElement,
     renderer: WebGLRenderer,
@@ -93,14 +89,107 @@ export const handleResize = (
     canvas.height = height;
     renderer.setSize(width, height);
 
-    // Update background camera
     backgroundCamera.left = -width / 2;
     backgroundCamera.right = width / 2;
     backgroundCamera.top = height / 2;
     backgroundCamera.bottom = -height / 2;
     backgroundCamera.updateProjectionMatrix();
 
-    // Update video camera
     videoCamera.aspect = width / height;
     videoCamera.updateProjectionMatrix();
+};
+
+interface CreateCroppedVideoSceneOptions {
+    videoTexture: VideoTexture;
+    videoWidth: number;
+    videoHeight: number;
+    cropWidth: number;
+    cropHeight: number;
+    cropY: number; // Crop from the top (Y offset)
+}
+
+export const createCroppedVideoScene = ({
+    videoTexture,
+    videoWidth,
+    videoHeight,
+    cropWidth,
+    cropHeight,
+    cropY, // Crop from the top (Y offset)
+}: CreateCroppedVideoSceneOptions) => {
+    const scene = new Scene();
+    const camera = new PerspectiveCamera(60, cropWidth / cropHeight, 0.1, 1000);
+
+    // Create a plane geometry for the cropped section
+    const planeWidth = 16; // Base width for the plane
+    const planeHeight = (planeWidth * cropHeight) / cropWidth; // Adjust height based on crop aspect ratio
+
+    const planeGeometry = new PlaneGeometry(planeWidth, planeHeight);
+    const planeMaterial = new MeshBasicMaterial({
+        map: videoTexture,
+        side: DoubleSide,
+        toneMapped: false,
+    });
+    const plane = new Mesh(planeGeometry, planeMaterial);
+    scene.add(plane);
+
+    // Adjust texture coordinates to crop the video from the top
+    const uvAttribute = planeGeometry.attributes.uv;
+    for (let i = 0; i < uvAttribute.count; i++) {
+        const u = uvAttribute.getX(i);
+        const v = uvAttribute.getY(i);
+        uvAttribute.setXY(
+            i,
+            u, // Keep the horizontal UV coordinate unchanged
+            (v * cropHeight) / videoHeight + cropY / videoHeight // Crop from the top
+        );
+    }
+    uvAttribute.needsUpdate = true;
+
+    // Position the camera
+    camera.position.z = 10;
+
+    return { scene, camera };
+};
+
+export const replayMouseEvents = (
+  mouseEvents: Array<{
+    type: "mouseDown" | "mouseUp" | "mouseMove";
+    time: Date;
+    x: number;
+    y: number;
+  }>,
+  startTime: Date,
+  onMouseDown: (x: number, y: number) => void,
+  onMouseUp: () => void,
+  onMouseMove: (x: number, y: number) => void
+) => {
+  if (!mouseEvents.length) return;
+
+  let currentEventIndex = 0;
+
+  const processNextEvent = () => {
+    if (currentEventIndex >= mouseEvents.length) return;
+
+    const event = mouseEvents[currentEventIndex];
+    const eventTime = event.time.getTime() - startTime.getTime();
+
+    setTimeout(() => {
+      if (event.type === "mouseDown") {
+        onMouseDown(event.x, event.y);
+      } else if (event.type === "mouseUp") {
+        onMouseUp();
+      } else if (event.type === "mouseMove") {
+        onMouseMove(event.x, event.y);
+      }
+
+      currentEventIndex++;
+      processNextEvent();
+    }, eventTime);
+  };
+
+  processNextEvent();
+};
+
+export const easeInOutQuad = (t: number): number => {
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 };

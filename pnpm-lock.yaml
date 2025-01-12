@@ -20,6 +20,9 @@ importers:
       '@plasmohq/storage':
         specifier: ^1.13.0
         version: 1.13.0(react@18.2.0)
+      gsap:
+        specifier: ^3.12.5
+        version: 3.12.5
       lucide-react:
         specifier: ^0.471.0
         version: 0.471.0(react@18.2.0)
@@ -2052,6 +2055,9 @@ packages:
   graphql@15.9.0:
     resolution: {integrity: sha512-GCOQdvm7XxV1S4U4CGrsdlEN37245eC8P9zaYCMr6K1BG0IPGy5lUwmJsEOGyl1GD6HXjOtl2keCP9asRBwNvA==}
     engines: {node: '>= 10.x'}
+
+  gsap@3.12.5:
+    resolution: {integrity: sha512-srBfnk4n+Oe/ZnMIOXt3gT605BX9x5+rh/prT2F1SsNJsU1XuMiP0E2aptW481OnonOGACZWBqseH5Z7csHxhQ==}
 
   has-flag@4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
@@ -5544,6 +5550,8 @@ snapshots:
       graphql: 15.9.0
 
   graphql@15.9.0: {}
+
+  gsap@3.12.5: {}
 
   has-flag@4.0.0: {}
 
