@@ -17,7 +17,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   currentTime,
   onDurationChange,
   onTimeUpdate,
-  onSeek,
 }) => {
   return (
     <div className="p-4 border border-gray-200 rounded-lg shadow-sm bg-white h-full">
@@ -27,7 +26,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         currentTime={currentTime}
         onDurationChange={onDurationChange}
         onTimeUpdate={onTimeUpdate}
-        onSeek={onSeek}
       />
     </div>
   );

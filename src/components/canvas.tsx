@@ -2,81 +2,165 @@ import "~style.css";
 import bgimg from "data-base64:~bgimg.png";
 import React, { useEffect, useRef, useCallback } from "react";
 import {
-  WebGLRenderer,
-  VideoTexture,
-  SRGBColorSpace,
-  LinearFilter,
-  PerspectiveCamera,
+	WebGLRenderer,
+	VideoTexture,
+	SRGBColorSpace,
+	LinearFilter,
+	PerspectiveCamera,
 } from "three";
 import {
-  loadTexture,
-  createBackgroundScene,
-  createVideoScene,
-  handleResize,
-  createCroppedVideoScene,
-  easeInOutQuad,
+	loadTexture,
+	createBackgroundScene,
+	createCroppedVideoScene,
+    applyEffectToCamera,
+    type Effect,
+    buildEffect,
 } from "~utils";
+import type { SessionData } from "./SessionLoader";
 
-interface SessionData {
-  startTime: Date;
-  endTime: Date;
-  videoUrl: string;
-  mouseEvents: Array<{
-    type: "mouseDown" | "mouseUp" | "mouseMove";
-    time: Date;
-    x: number;
-    y: number;
-  }>;
-  windowDimensions: { width: number; height: number };
-}
 
 interface CanvasProps {
-  session: SessionData | null;
-  isPlaying: boolean;
-  currentTime: number;
-  onDurationChange: (duration: number) => void;
-  onTimeUpdate: (currentTime: number) => void;
-  onSeek: (time: number) => void;
+	session: SessionData | null;
+	isPlaying: boolean;
+	currentTime: number;
+	onDurationChange: (duration: number) => void;
+	onTimeUpdate: (currentTime: number) => void;
 }
 
-const Canvas: React.FC<CanvasProps> = ({
-  session,
-  isPlaying,
-  currentTime,
-  onDurationChange,
-  onTimeUpdate,
-  onSeek,
-}) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const videoCameraRef = useRef<PerspectiveCamera | null>(null);
-  const zoomAnimationRef = useRef<number | null>(null);
+
+const calculateCanvasSize = (container: HTMLElement) => {
+	const containerWidth = container.clientWidth;
+	const containerHeight = container.clientHeight;
+
+	const targetRatio = 16 / 9;
+	let width = containerWidth;
+	let height = width / targetRatio;
+
+	if (height > containerHeight) {
+		height = containerHeight;
+		width = height * targetRatio;
+	}
+
+	return { width, height };
+};
+
+
+
+const useVideoPlayback = (
+  session: SessionData,
+  isPlaying: boolean,
+  onTimeUpdate: (time: number) => void
+) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const rendererRef = useRef<WebGLRenderer | null>(null);
-  const videoCurrentTimeRef = useRef(0); // Track the video's current time
+  const videoCurrentTimeRef = useRef(0); // Track the current time internally
 
-  // Memoize the resize handler to avoid recreating it on every render
-  const onResize = useCallback(() => {
-    console.log("onResize triggered");
-    if (!canvasRef.current || !rendererRef.current) return;
-
-    const container = canvasRef.current.parentElement;
-    if (!container) return;
-
-    const { width, height } = calculateCanvasSize(container);
-    rendererRef.current.setSize(width, height);
-    rendererRef.current.setPixelRatio(window.devicePixelRatio);
-
-    if (videoCameraRef.current) {
-      const video = videoRef.current!;
-      const videoAspectRatio = video.videoWidth / video.videoHeight;
-      videoCameraRef.current.aspect = videoAspectRatio;
-      videoCameraRef.current.updateProjectionMatrix();
-    }
-  }, []);
-
+  // Initialize video element
   useEffect(() => {
-    console.log("useEffect triggered for session and canvas setup");
-    if (!session || !canvasRef.current) return;
+    if (session) {
+      const video = document.createElement("video");
+      video.src = session.videoUrl;
+      video.crossOrigin = "anonymous";
+      video.loop = true;
+      video.muted = true;
+      videoRef.current = video;
+
+      // Cleanup
+      return () => {
+        video.pause();
+        video.removeAttribute("src");
+      };
+    }
+  }, [session]);
+
+  // Handle play/pause
+  useEffect(() => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.play();
+        console.log("Video playback started.");
+      } else {
+        videoRef.current.pause();
+        console.log("Video playback paused.");
+      }
+    }
+  }, [isPlaying]);
+
+  // Handle timeupdate event
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handleTimeUpdate = () => {
+      const currentVideoTime = video.currentTime; // Use video.currentTime
+      if (currentVideoTime !== videoCurrentTimeRef.current) {
+        videoCurrentTimeRef.current = currentVideoTime;
+        onTimeUpdate(currentVideoTime); // Notify parent component
+      }
+    };
+
+    video.addEventListener("timeupdate", handleTimeUpdate);
+    return () => {
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+    };
+  }, [onTimeUpdate]);
+
+  return videoRef;
+};
+
+
+
+
+const useCameraEffects = (
+  session: SessionData,
+  currentTime: number,
+  videoCamera: PerspectiveCamera | null,
+  defaultPosition: { x: number; y: number; z: number } | null,
+  defaultFOV: number | null,
+  croppedDimensions: { width: number; height: number } | null
+) => {
+  const effectsRef = useRef<Effect[] | null>(null);
+
+  // Load effects when session changes
+  useEffect(() => {
+    if (session) {
+      effectsRef.current = buildEffect(session);
+      console.log("Effects loaded:", effectsRef.current);
+    }
+  }, [session]);
+
+  // Apply effects to the camera
+  useEffect(() => {
+    if (videoCamera && effectsRef.current?.length && croppedDimensions) {
+      applyEffectToCamera(
+        effectsRef.current,
+        currentTime,
+        videoCamera,
+        defaultPosition,
+        defaultFOV,
+        croppedDimensions.width,
+        croppedDimensions.height
+      );
+    }
+  }, [currentTime, videoCamera, defaultPosition, defaultFOV, croppedDimensions]);
+};
+
+
+const useRendering = (
+  canvasRef: React.RefObject<HTMLCanvasElement>,
+  session: SessionData,
+  videoRef: React.RefObject<HTMLVideoElement>,
+  onDurationChange: (duration: number) => void
+) => {
+  const rendererRef = useRef<WebGLRenderer | null>(null);
+  const videoCameraRef = useRef<PerspectiveCamera | null>(null);
+  const defaultPositionRef = useRef<{ x: number; y: number; z: number } | null>(null);
+  const defaultFOVRef = useRef<number | null>(null);
+  const croppedDimensionsRef = useRef<{ width: number; height: number } | null>(null);
+  const animationFrameId = useRef<number | null>(null);
+
+  // Initialize the scene
+  useEffect(() => {
+    if (!session || !canvasRef.current || !videoRef.current) return;
 
     const canvas = canvasRef.current;
     const container = canvas.parentElement;
@@ -97,19 +181,13 @@ const Canvas: React.FC<CanvasProps> = ({
 
     const { scene: backgroundScene, camera: backgroundCamera } = createBackgroundScene(width, height, backgroundTexture);
 
-    const video = document.createElement("video");
-    video.src = session.videoUrl;
-    video.crossOrigin = "anonymous";
-    video.loop = true;
-    video.muted = true;
-    videoRef.current = video;
-
+    const video = videoRef.current;
     const videoTexture = new VideoTexture(video);
     videoTexture.minFilter = LinearFilter;
     videoTexture.magFilter = LinearFilter;
     videoTexture.colorSpace = SRGBColorSpace;
 
-    video.addEventListener("loadedmetadata", () => {
+    const handleLoadedMetadata = () => {
       const videoWidth = video.videoWidth;
       const videoHeight = video.videoHeight;
 
@@ -117,7 +195,10 @@ const Canvas: React.FC<CanvasProps> = ({
       const cropHeight = session.windowDimensions.height;
       const cropY = 0;
 
-      const { scene: videoScene, camera: videoCamera } = createCroppedVideoScene({
+      // Store cropped dimensions
+      croppedDimensionsRef.current = { width: cropWidth, height: cropHeight };
+
+      const { scene: videoScene, camera: videoCamera, defaultPosition, defaultFOV } = createCroppedVideoScene({
         videoTexture,
         videoWidth,
         videoHeight,
@@ -127,9 +208,17 @@ const Canvas: React.FC<CanvasProps> = ({
       });
 
       videoCameraRef.current = videoCamera;
-      videoCamera.updateProjectionMatrix();
+      defaultPositionRef.current = defaultPosition;
+      defaultFOVRef.current = defaultFOV;
 
-      onDurationChange(video.duration);
+      const durationInSeconds = (session.endTime - session.startTime) / 1000;
+
+      if (typeof durationInSeconds === "number" && !isNaN(durationInSeconds) && durationInSeconds >= 0) {
+        onDurationChange(durationInSeconds);
+        console.log("Video metadata loaded. Duration:", durationInSeconds);
+      } else {
+        console.error("Invalid session duration calculated:", durationInSeconds);
+      }
 
       const animate = () => {
         requestAnimationFrame(animate);
@@ -138,48 +227,86 @@ const Canvas: React.FC<CanvasProps> = ({
         renderer.render(videoScene, videoCamera);
       };
       animate();
-    });
 
-    video.addEventListener("timeupdate", () => {
-      const currentVideoTime = video.currentTime;
-      if (currentVideoTime !== videoCurrentTimeRef.current) {
-        videoCurrentTimeRef.current = currentVideoTime; // Update the ref
-        console.log(`Video time updated: ${currentVideoTime}`);
-        onTimeUpdate(currentVideoTime); // Call onTimeUpdate only if the time changed naturally
-      }
-    });
+      console.log("Video camera initialized:", videoCamera);
+      console.log("Default camera position:", defaultPosition);
+      console.log("Default FOV:", defaultFOV);
+      console.log("Cropped video dimensions:", croppedDimensionsRef.current);
+    };
 
-    // Add resize event listener
-    window.addEventListener("resize", onResize);
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
 
+    // Cleanup
     return () => {
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       video.pause();
       video.removeAttribute("src");
       renderer.dispose();
-      window.removeEventListener("resize", onResize);
-      if (zoomAnimationRef.current) {
-        cancelAnimationFrame(zoomAnimationRef.current);
+      if (animationFrameId.current) {
+        cancelAnimationFrame(animationFrameId.current);
       }
+
+      console.log("Rendering cleanup complete.");
     };
-  }, [session, onDurationChange, onTimeUpdate, onResize]);
+  }, [session, onDurationChange, canvasRef, videoRef]);
 
-  useEffect(() => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.play();
-      } else {
-        videoRef.current.pause();
-      }
-    }
-  }, [isPlaying]);
+  const onResize = useCallback(() => {
+    if (!canvasRef.current || !rendererRef.current) return;
 
-  useEffect(() => {
-    if (videoRef.current && Math.abs(videoRef.current.currentTime - currentTime) > 0.1) {
-      console.log(`Setting video currentTime to: ${currentTime}`);
-      videoRef.current.currentTime = currentTime; // Set the video's current time
-      videoCurrentTimeRef.current = currentTime; // Update the ref to match
+    const container = canvasRef.current.parentElement;
+    if (!container) return;
+
+    const { width, height } = calculateCanvasSize(container);
+    rendererRef.current.setSize(width, height);
+    rendererRef.current.setPixelRatio(window.devicePixelRatio);
+
+    if (videoCameraRef.current) {
+      videoCameraRef.current.aspect = width / height;
+      videoCameraRef.current.updateProjectionMatrix();
+      console.log("Canvas resized. New camera projection matrix:", videoCameraRef.current.projectionMatrix);
     }
-  }, [currentTime]);
+  }, []);
+
+  // Handle window resize
+  useEffect(() => {
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+    };
+  }, [onResize]);
+
+  return { videoCameraRef, defaultPositionRef, defaultFOVRef, croppedDimensionsRef };
+};
+
+const Canvas: React.FC<CanvasProps> = ({
+  session,
+  isPlaying,
+  currentTime,
+  onDurationChange,
+  onTimeUpdate,
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Handle video playback
+  const videoRef = useVideoPlayback(session, isPlaying, onTimeUpdate);
+
+  // Handle rendering
+  const { videoCameraRef, defaultPositionRef, defaultFOVRef, croppedDimensionsRef } = useRendering(
+    canvasRef,
+    session,
+    videoRef,
+    onDurationChange
+  );
+
+  // Handle camera effects
+  useCameraEffects(
+    session,
+    currentTime,
+    videoCameraRef.current,
+    defaultPositionRef.current,
+    defaultFOVRef.current,
+    croppedDimensionsRef.current
+  );
 
   if (!session) {
     return <div>No session data found.</div>;
@@ -198,23 +325,6 @@ const Canvas: React.FC<CanvasProps> = ({
       }}
     />
   );
-};
-
-const calculateCanvasSize = (container: HTMLElement) => {
-  const containerWidth = container.clientWidth;
-  const containerHeight = container.clientHeight;
-
-  const targetRatio = 16 / 9;
-  let width = containerWidth;
-  let height = width / targetRatio;
-
-  if (height > containerHeight) {
-    height = containerHeight;
-    width = height * targetRatio;
-  }
-
-  console.log(`Calculated canvas size: width: ${width}, height: ${height}`);
-  return { width, height };
 };
 
 export default Canvas;

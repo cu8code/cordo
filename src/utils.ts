@@ -8,11 +8,11 @@ import {
     PlaneGeometry,
     MeshBasicMaterial,
     Mesh,
-    LinearFilter,
     DoubleSide,
-    SRGBColorSpace,
-    Color,
+    Vector3,
+    MathUtils,
 } from "three";
+import type { SessionData } from "~components/SessionLoader";
 
 export const loadTexture = (url: string) => {
     const textureLoader = new TextureLoader();
@@ -117,7 +117,12 @@ export const createCroppedVideoScene = ({
     cropY, // Crop from the top (Y offset)
 }: CreateCroppedVideoSceneOptions) => {
     const scene = new Scene();
-    const camera = new PerspectiveCamera(60, cropWidth / cropHeight, 0.1, 1000);
+    
+    // Calculate the aspect ratio of the cropped area
+    const cropAspectRatio = cropWidth / cropHeight;
+
+    // Create a camera with a default FOV (will be updated dynamically)
+    const camera = new PerspectiveCamera(60, cropAspectRatio, 0.1, 1000);
 
     // Create a plane geometry for the cropped section
     const planeWidth = 16; // Base width for the plane
@@ -145,51 +150,146 @@ export const createCroppedVideoScene = ({
     }
     uvAttribute.needsUpdate = true;
 
-    // Position the camera
-    camera.position.z = 10;
+    // Calculate dynamic FOV based on the video's height and crop area
+    const fovHeight = 2 * Math.atan((cropHeight / 2) / 1000) * (180 / Math.PI); // Adjust FOV based on crop height
+    camera.fov = fovHeight; // Set the calculated FOV
+    camera.updateProjectionMatrix();
 
-    return { scene, camera };
-};
+    // Adjust camera position to fit the cropped video
+    const distance = (planeHeight / 2) / Math.tan((camera.fov / 2) * (Math.PI / 180)); // Distance to fit the plane height
+    camera.position.z = distance + 1;
 
-export const replayMouseEvents = (
-  mouseEvents: Array<{
-    type: "mouseDown" | "mouseUp" | "mouseMove";
-    time: Date;
-    x: number;
-    y: number;
-  }>,
-  startTime: Date,
-  onMouseDown: (x: number, y: number) => void,
-  onMouseUp: () => void,
-  onMouseMove: (x: number, y: number) => void
-) => {
-  if (!mouseEvents.length) return;
+    // Store the default camera position and FOV
+    const defaultPosition = { x: 0, y: 0, z: camera.position.z };
+    const defaultFOV = camera.fov; // Store the calculated FOV
 
-  let currentEventIndex = 0;
-
-  const processNextEvent = () => {
-    if (currentEventIndex >= mouseEvents.length) return;
-
-    const event = mouseEvents[currentEventIndex];
-    const eventTime = event.time.getTime() - startTime.getTime();
-
-    setTimeout(() => {
-      if (event.type === "mouseDown") {
-        onMouseDown(event.x, event.y);
-      } else if (event.type === "mouseUp") {
-        onMouseUp();
-      } else if (event.type === "mouseMove") {
-        onMouseMove(event.x, event.y);
-      }
-
-      currentEventIndex++;
-      processNextEvent();
-    }, eventTime);
-  };
-
-  processNextEvent();
+    return { scene, camera, defaultPosition, defaultFOV };
 };
 
 export const easeInOutQuad = (t: number): number => {
   return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+};
+
+export const applyEffectToCamera = (
+  effects: Effect[],
+  currentTime: number,
+  videoCamera: PerspectiveCamera,
+  defaultPosition: { x: number; y: number; z: number },
+  defaultFOV: number,
+  windowWidth: number,
+  windowHeight: number
+) => {
+  if (!effects.length || !videoCamera) return;
+
+const activeEffect = effects.find((effect) => {
+  const isActive =
+    currentTime * 1000 >= effect.startTime && currentTime * 1000 <= effect.endTime;
+  return isActive;
+});
+	
+  if (activeEffect) {
+    const { startTime, endTime, points } = activeEffect;
+    const progress = (currentTime * 1000 - startTime) / (endTime - startTime);
+
+    const totalPoints = points.length;
+    const exactPointIndex = progress * (totalPoints - 1);
+    const pointIndex = Math.floor(exactPointIndex);
+    const nextPointIndex = Math.min(pointIndex + 1, totalPoints - 1);
+    const interpolationFactor = exactPointIndex - pointIndex;
+
+    const currentPoint = points[pointIndex];
+    const nextPoint = points[nextPointIndex];
+
+    let x = currentPoint.x + (nextPoint.x - currentPoint.x) * interpolationFactor;
+    let y = currentPoint.y + (nextPoint.y - currentPoint.y) * interpolationFactor;
+
+    x = (x / windowWidth) * 2 - 1;
+    y = -((y / windowHeight) * 2 - 1);
+
+    const scaleFactor = 10;
+    x *= scaleFactor;
+    y *= scaleFactor;
+
+    // Only zoom in (no zoom out beyond defaultFOV)
+    const minFOV = defaultFOV; // Start from defaultFOV
+    const maxFOV = defaultFOV - 20; // Zoom in by reducing FOV (smaller FOV = more zoom)
+    const fov = minFOV + (maxFOV - minFOV) * progress;
+
+    // Smoothly interpolate camera position and FOV
+    videoCamera.position.lerp(new Vector3(x / 10, y / 10, videoCamera.position.z), 0.1);
+    videoCamera.fov = MathUtils.lerp(videoCamera.fov, fov, 0.1);
+    videoCamera.updateProjectionMatrix();
+  } else {
+    // Reset camera position and FOV to default values when no effect is active
+    videoCamera.position.lerp(new Vector3(defaultPosition.x, defaultPosition.y, defaultPosition.z), 0.1);
+    videoCamera.fov = MathUtils.lerp(videoCamera.fov, defaultFOV, 0.1);
+    videoCamera.updateProjectionMatrix();
+  }
+};
+
+export interface Effect {
+	startTime: number;
+	endTime: number;
+	points?: Array<{ x: number; y: number }>;
+	fov?: number;
+}
+
+export const buildEffect = (session: SessionData): Effect[] => {
+	const { mouseEvents, startTime } = session;
+	
+
+	// Ensure startTime is a valid number (timestamp in milliseconds)
+	if (typeof startTime !== "number" || isNaN(startTime)) {
+		throw new Error("startTime must be a valid timestamp (number)");
+	}
+
+	const tracks: Effect[] = [];
+	let currentTrack: Effect | null = null;
+
+	for (const event of mouseEvents) {
+		// Ensure event.time is a valid number (timestamp in milliseconds)
+		if (typeof event.time !== "number" || isNaN(event.time)) {
+			throw new Error("Event timestamp must be a valid timestamp (number)");
+		}
+
+		// Calculate the time in seconds relative to the session start time
+		const timeInMs = (event.time - startTime);
+
+		// Ensure the time is non-negative and within the session duration
+		if (timeInMs < 0) {
+			continue; // Skip events that occur before the session start time
+		}
+
+		switch (event.type) {
+			case "mouseDown": {
+				// Start a new track
+				currentTrack = {
+					startTime: timeInMs,
+					endTime: timeInMs, // Initially, endTime is the same as startTime
+					points: [{ x: event.x, y: event.y }],
+				};
+				break;
+			}
+
+			case "mouseMove": {
+				// Add the current point to the active track
+				if (currentTrack) {
+					currentTrack.points.push({ x: event.x, y: event.y });
+				}
+				break;
+			}
+
+			case "mouseUp": {
+				// Finalize the current track and add it to the tracks array
+				if (currentTrack) {
+					currentTrack.endTime = timeInMs;
+					tracks.push(currentTrack);
+					currentTrack = null;
+				}
+				break;
+			}
+		}
+	}
+
+	return tracks;
 };

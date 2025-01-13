@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
 
 export interface SessionData {
-  startTime: Date;
-  endTime: Date;
+  startTime: number;
+  endTime: number;
   videoUrl: string;
   mouseEvents: Array<{
     type: "mouseDown" | "mouseUp" | "mouseMove";
-    time: Date;
+    time: number;
     x: number;
     y: number;
   }>;
@@ -24,12 +24,7 @@ const SessionLoader: React.FC<SessionLoaderProps> = ({ onSessionLoaded }) => {
     const sessionData = localStorage.getItem("sessionData");
     if (sessionData) {
       const parsedSession = JSON.parse(sessionData);
-      parsedSession.startTime = new Date(parsedSession.startTime);
-      parsedSession.endTime = new Date(parsedSession.endTime);
-      parsedSession.mouseEvents = parsedSession.mouseEvents.map((event: any) => ({
-        ...event,
-        time: new Date(event.time),
-      }));
+			console.log(parsedSession)
       onSessionLoaded(parsedSession);
     }
     setLoading(false);

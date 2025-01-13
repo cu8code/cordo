@@ -1,9 +1,9 @@
 import "~style.css";
+
 import React, { useCallback, useState } from "react";
+
 import SessionLoader, { type SessionData } from "~components/SessionLoader";
 import VideoPlayer from "~components/VideoPlayer";
-import TimeLine from "~components/TimeLine";
-import OptionMenu from "~components/OptionMenu";
 
 export function Editor() {
   const [session, setSession] = useState<SessionData | null>(null);
@@ -15,14 +15,17 @@ export function Editor() {
     console.log("onResize called");
     setSession(session);
 
-    if (session.startTime instanceof Date && session.endTime instanceof Date) {
-      const durationInSeconds = (session.endTime.getTime() - session.startTime.getTime()) / 1000;
+    // Ensure startTime and endTime are valid numbers
+    if (typeof session.startTime === "number" && typeof session.endTime === "number") {
+      const durationInSeconds = (session.endTime - session.startTime);
       setDuration(durationInSeconds);
+    } else {
+      console.error("Invalid session timestamps. Expected numbers.");
     }
   }, []);
 
   const handleSeek = useCallback((time: number) => {
-    console.log("onTimeUpdate called with currentTime:", currentTime);
+    console.log("onTimeUpdate called with currentTime:", time);
     setCurrentTime(time);
   }, []);
 
@@ -32,32 +35,37 @@ export function Editor() {
   }, []);
 
   return (
-    <div className="h-screen w-full flex flex-row gap-4 p-4 bg-gray-50">
+    <div className="flex flex-row gap-4 p-4 bg-gray-50">
       <SessionLoader onSessionLoaded={handleSessionLoaded} />
       {session && (
         <>
           <div className="flex flex-col h-full w-full basis-3/4 gap-4">
             <VideoPlayer
-            session={session}
-            isPlaying={isPlaying}
-            currentTime={currentTime}
-            onDurationChange={handleDurationChange}
-            onTimeUpdate={setCurrentTime}
-            onSeek={handleSeek}
-            />
-            <TimeLine
-            currentTime={currentTime}
-            duration={duration}
-            onSeek={handleSeek}
+              session={session}
+              isPlaying={isPlaying}
+              currentTime={currentTime}
+              onDurationChange={handleDurationChange}
+              onTimeUpdate={setCurrentTime}
+              onSeek={handleSeek}
             />
           </div>
-          <div className="p-4 border border-gray-200 rounded-lg shadow-sm bg-white h-full basis-1/4">
-            <OptionMenu />
+          <div className="flex bg-white rounded basis-1/4">
+            <div className="space-y-4 flex m-2 border border-black/10 rounded w-full">
+              <ExportButton />
+            </div>
           </div>
         </>
       )}
     </div>
   );
 }
+
+const ExportButton = () => {
+  return (
+    <button className="m-2 text-white w-full h-10 bg-green-500 rounded">
+      Export
+    </button>
+  );
+};
 
 export default Editor;
